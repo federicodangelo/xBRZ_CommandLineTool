@@ -20,7 +20,7 @@
 #include "stb\stb_image.h"
 #include "stb\stb_image_write.h"
 
-int processFile(char* fromFile, char* toFile, int scaleFactor);
+int processFile(char* fromFile, char* toFile, int scaleFactor, int padding);
 
 int main(int argc, char* argv[])
 {
@@ -66,7 +66,8 @@ int main(int argc, char* argv[])
 
 	if (use_file)
 	{
-		return processFile(sourcePath, targetPath, scaleFactor);
+		//Add 2 pixels padding if the file doesn't contain "floor" in the filename
+		return processFile(sourcePath, targetPath, scaleFactor, strstr(sourcePath, "floor") == NULL ? 2 : 0);
 	}
 	else if (use_directory)
 	{
@@ -85,7 +86,8 @@ int main(int argc, char* argv[])
 					strcat(toFile, "/");
 				strcat(toFile, fromPathFileName + 1); //skip "/"
 
-				processFile(fromFile, toFile, scaleFactor);
+				//Add 2 pixels padding if the file doesn't contain "floor" in the filename
+				processFile(fromFile, toFile, scaleFactor, strstr(fromPathFileName, "floor") == NULL ? 2 : 0);
 			}
 
 		}
@@ -94,10 +96,30 @@ int main(int argc, char* argv[])
 	}
 }
 
-int processFile(char* fromFile, char* toFile, int scaleFactor)
+int processFile(char* fromFile, char* toFile, int scaleFactor, int padding)
 {
 	int originalWidth,originalHeight,n;
-	unsigned char *originalPixels = stbi_load(fromFile, &originalWidth, &originalHeight, &n, 4);
+	uint32_t *originalPixels = (uint32_t*) stbi_load(fromFile, &originalWidth, &originalHeight, &n, 4);
+
+	if (padding > 0)
+	{	
+		int newWidth = originalWidth + padding * 2;
+		int newHeight = originalHeight + padding * 2;
+		uint32_t *newPixels = (uint32_t*) STBI_MALLOC(newWidth * newHeight * sizeof(uint32_t));
+
+		memset(newPixels, 0, newWidth * newHeight * sizeof(uint32_t));
+
+		for (int y = 0; y < originalHeight; y++)
+			for (int x = 0; x < originalWidth; x++)
+				newPixels[(y + padding) * newWidth + (x + padding)] = originalPixels[y * originalWidth + x];
+
+		stbi_image_free(originalPixels);
+
+		originalPixels = newPixels;
+		originalWidth = newWidth;
+		originalHeight = newHeight;
+	}
+
 
 	if (originalPixels != NULL)
 	{
@@ -105,9 +127,34 @@ int processFile(char* fromFile, char* toFile, int scaleFactor)
 
 		xbrz::ColorFormat colorFormat = xbrz::ColorFormat::ARGB;
 
-		xbrz::scale(scaleFactor, (uint32_t*)originalPixels, resizedPixels, originalWidth, originalHeight, colorFormat);
+		xbrz::scale(scaleFactor, originalPixels, resizedPixels, originalWidth, originalHeight, colorFormat);
 
-		if (stbi_write_png(toFile, originalWidth * scaleFactor, originalHeight * scaleFactor, 4, resizedPixels, 0) == 0)
+		originalWidth *= scaleFactor;
+		originalHeight *= scaleFactor;
+		padding *= scaleFactor;
+
+		if (padding > 0)
+		{
+			int newWidth = originalWidth - padding * 2;
+			int newHeight = originalHeight - padding * 2;
+				 
+			uint32_t *newPixels = (uint32_t*)STBI_MALLOC(newWidth * newHeight * sizeof(uint32_t));
+
+			memset(newPixels, 0, newWidth * newHeight * sizeof(uint32_t));
+
+			for (int y = 0; y < newHeight; y++)
+				for (int x = 0; x < newWidth; x++)
+					newPixels[y * newWidth + x] = resizedPixels[(y + padding) * originalWidth + (x + padding)];
+
+			stbi_image_free(resizedPixels);
+
+			resizedPixels = newPixels;
+			originalWidth -= padding * 2;
+			originalHeight -= padding * 2;
+		}
+
+
+		if (stbi_write_png(toFile, originalWidth, originalHeight, 4, resizedPixels, 0) == 0)
 			printf("Error writing target file: %s\n", toFile);
 		else
 			printf("File %s scaled by %d and saved to file %s\n", fromFile, scaleFactor, toFile);
